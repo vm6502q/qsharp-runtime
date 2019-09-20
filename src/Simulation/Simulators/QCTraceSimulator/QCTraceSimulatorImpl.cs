@@ -181,7 +181,7 @@ namespace Microsoft.Quantum.Simulation.Simulators.QCTraceSimulators.Implementati
         }
 
         #region Helpers
-        static private (long, long) Reduce(long numerator, long denominatorPower)
+        static internal (long, long) Reduce(long numerator, long denominatorPower)
         {
             if (numerator == 0)
             {
