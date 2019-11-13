@@ -144,21 +144,22 @@ namespace Microsoft.Quantum.Simulation.Core
         /// </summary>
         private static bool IsValidValue(Type targetType, object partialValues) // decides whether partialValues are compatible with targetType
         {
+            var givenType = partialValues?.GetType();
             if (targetType == null) return true; // targetType is a generic type
             else if (partialValues == null)
             {
                 return targetType.IsValueType == false;
             }
-            else if (partialValues.GetType() == typeof(MissingParameter))
+            else if (givenType == typeof(MissingParameter))
             {
                 return true;
             }
             else if (targetType.IsTuple())
             {
                 if (partialValues == null) return false;
-                if (!partialValues.GetType().IsTuple()) return false;
+                if (!givenType.IsTuple()) return false;
 
-                var partialValuesFields = partialValues.GetType().GetFields().OrderBy(f => f.Name).ToArray();
+                var partialValuesFields = givenType.GetFields().OrderBy(f => f.Name).ToArray();
                 var targetTypeFields = targetType.GetFields().OrderBy(f => f.Name).ToArray();
                 if (partialValuesFields.Length == targetTypeFields.Length)
                 {
@@ -173,7 +174,7 @@ namespace Microsoft.Quantum.Simulation.Core
             }
             else
             {
-                return targetType.IsAssignableFrom(partialValues.GetType());
+                return targetType.IsAssignableFrom(givenType);
             }
         }
 
@@ -292,7 +293,8 @@ namespace Microsoft.Quantum.Simulation.Core
         /// </summary>
         public static Func<P, I> Create<P, I>(object partial)
         {
-            Debug.Assert(IsValidValue(typeof(I), partial));
+            //Debug.Assert(IsValidValue(typeof(I), partial));
+            if (!IsValidValue(typeof(I), partial)) throw new ArgumentException();
             var arg1 = GetTupleValues(partial);
 
             return new Func<P, I>((argTuple) =>

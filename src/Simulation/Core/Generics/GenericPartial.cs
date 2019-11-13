@@ -213,10 +213,13 @@ namespace Microsoft.Quantum.Simulation.Core
             var partialType = IdentifyPartialArgsType(P);
             var outType = O.Normalize();
             var op = this.BaseOp.FindCallable(baseArgsType, outType);
+            // partialType = Int[]               the type of the missing argument
+            // baseArgType = (Pauli[], Int[])    the type of the concrete instance of the partially applied gen op
+            // outType = object ??
 
-            var (partialOperationType, typeArgs) = PartialApplicationTypes(partialType, baseArgsType, outType, op.GetType());
-            var partialOpType = partialOperationType.MakeGenericType(typeArgs);
-            var partialValues = this.Values.GetType().IsPartialMapper()
+            var (partialOperationType, typeArgs) = PartialApplicationTypes(partialType, baseArgsType, outType, op.GetType()); // FIXME: ...
+            var partialOpType = partialOperationType.MakeGenericType(typeArgs); 
+            var partialValues = this.Values.GetType().IsPartialMapper() 
                 ? PartialMapper.CastTuple(typeof(Func<,>).MakeGenericType(new Type[] { typeArgs[0], typeArgs[1] }), this.Values)
                 : this.Values;
 

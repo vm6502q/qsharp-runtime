@@ -502,8 +502,8 @@ module SimulationCode =
             many |> Seq.map captureExpression |> Seq.toList |> ``tuple`` // captured since we rely on the native C# tuples 
 
         and buildPartial (partialType : ResolvedType) typeParamResolutions opEx args =
-            let (pIn, pOut) = inAndOutputType partialType     // The type of the operation constructed by partial application
-            let (oIn, _) = inAndOutputType opEx.ResolvedType  // The type of the operation accepting the partial tuples.
+            let (pIn, _) = inAndOutputType partialType     // The type of the operation constructed by partial application
+            let (oIn, oOut) = inAndOutputType opEx.ResolvedType  // The type of the operation accepting the partial tuples.
 
             let buildPartialMapper () = // may only be executed if there are no more type parameters to be resolved                
                 let argName = nextArgName()
@@ -537,7 +537,7 @@ module SimulationCode =
             // so we just build a partial-tuple and let it be resolved at runtime.
             let op = buildExpression opEx
             let values =
-                if hasTypeParameters [ pIn; pOut ] then args |> captureExpression
+                if hasTypeParameters [ oIn; oOut ] then args |> captureExpression // FIXME: THAT NEEDS TO REGISTER
                 else buildPartialMapper()
             op <.> (``ident`` "Partial", [ values ])
 
