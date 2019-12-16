@@ -220,7 +220,10 @@ namespace Microsoft.Quantum.Simulation.QCTraceSimulatorRuntime
         Result UnconstrainedMeasurementResult()
         {
             OnUnconstrainedMeasurement();
-            return Result.Zero;
+            Double sample = randomGenerator.NextDouble();
+            return sample < 0.5
+                ? Result.Zero
+                : Result.One;
         }
 
         /// <summary>
