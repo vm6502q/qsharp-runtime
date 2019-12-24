@@ -48,7 +48,7 @@
       DependsOnTargets="ResolveAssemblyReferences" 
       BeforeTargets="CoreCompile;QsharpClean">
     <ItemGroup>
-      <QsReferences Include="@(ReferencePath)" Condition="$([System.Text.RegularExpressions.Regex]::IsMatch(%(FullPath), '(?i)system.|mscorlib|netstandard.library|microsoft.netcore.app')) == false" />
+      <QsReferences Include="@(ReferencePath)" />
       <QsharpFiles Include="@(QsharpCompile)">
         <Visible>false</Visible>
       </QsharpFiles>
