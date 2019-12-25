@@ -20,6 +20,7 @@ IF NOT "%AGENT_ID%" == "" GOTO EOF
 
 :: Make sure everything is ready and builds locally.
 cmake --build src\Simulation\Native\build --target Microsoft.Quantum.Simulator.Runtime --config Release || EXIT /B 1
+dotnet  build src\Simulation\CsharpGeneration.App     || EXIT /B 1
 dotnet  build Simulation.sln                          || EXIT /B 1
 
 :: Done

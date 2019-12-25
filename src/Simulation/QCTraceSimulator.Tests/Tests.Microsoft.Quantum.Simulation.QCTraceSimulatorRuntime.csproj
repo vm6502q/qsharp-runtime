@@ -1,25 +1,24 @@
-﻿<Project Sdk="Microsoft.Quantum.Sdk/0.10.1912.2306-alpha">
-
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  
   <Import Project="..\Common\AssemblyCommon.props" />
   <Import Project="..\Common\Simulators.Dev.props" />
+  <Import Project="..\..\Quantum.Development.Kit\Props\QSharp.Dev.props" />
 
   <PropertyGroup>
     <TargetFramework>netcoreapp3.0</TargetFramework>
-    <IncludeQsharpCorePackages>false</IncludeQsharpCorePackages>
-    <CsharpGeneration>false</CsharpGeneration><!-- we will provide our own -->
+    <PlatformTarget>x64</PlatformTarget>
     <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\Xunit\Microsoft.Quantum.Xunit.csproj" />
-    <ProjectReference Include="..\CsharpGeneration\Microsoft.Quantum.CsharpGeneration.fsproj" IsQscReference="true" />
   </ItemGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="16.4.0" />
     <PackageReference Include="xunit" Version="2.4.1" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="2.3.1" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.4.1" />
   </ItemGroup>
 
+  <Import Project="..\..\Quantum.Development.Kit\Props\QSharp.targets" />
 </Project>
-

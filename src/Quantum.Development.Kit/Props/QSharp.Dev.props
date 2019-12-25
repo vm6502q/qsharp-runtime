@@ -1,0 +1,25 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+
+  <PropertyGroup>
+    <RunQsc>True</RunQsc>
+    <RunQDocGen>False</RunQDocGen>
+    <LangVersion>latest</LangVersion>
+    <QsharpLangVersion>0.10</QsharpLangVersion>
+    <EnableDefaultNoneItems>false</EnableDefaultNoneItems>
+    <DisableFastUpToDateCheck>True</DisableFastUpToDateCheck>
+    <QscExe>dotnet $([MSBuild]::NormalizePath($(EnlistmentRoot)src/Simulation/CsharpGeneration.App/bin/$(Configuration)/netcoreapp3.0/Microsoft.Quantum.CsharpGeneration.App.dll))</QscExe>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PropertyPageSchema Include="$(MSBuildThisFileDirectory)QSharp.ProjectItemsSchema.xaml;" />
+    <PropertyPageSchema Include="$(MSBuildThisFileDirectory)QSharp.xaml;">
+      <Context>File;BrowseObject</Context>
+    </PropertyPageSchema>
+  </ItemGroup>
+
+  <ItemGroup>
+    <QsharpCompile Include="**/*.qs" Exclude="obj/**" />
+  </ItemGroup>
+  
+</Project>

@@ -17,4 +17,5 @@ pushd src/Simulation/Native
 cmake --build build
 popd
 
+dotnet  build src/Simulation/CsharpGeneration.App
 dotnet  build Simulation.sln
