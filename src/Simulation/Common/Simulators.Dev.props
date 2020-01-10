@@ -32,7 +32,7 @@
 
   <Target Name="BeforeCsharpCompile">
     <ItemGroup>
-      <Compile Include="$(GeneratedFilesOutputPath)**/*.g.cs" Exclude="@(Compile)" AutoGen="true" />
+      <Compile Include="$(GeneratedFilesOutputPath)\**\*.g.cs" Exclude="@(Compile)" AutoGen="true" />
     </ItemGroup>
   </Target>
 
