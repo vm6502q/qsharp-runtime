@@ -31,6 +31,8 @@ type Emitter() =
         member this.PostconditionVerification _ = NotImplementedException() |> raise
         
         member this.Transformation (compilation, transformed) = 
+            Console.WriteLine("===q#.cs=== starting codegen")
+
             let step = this :> IRewriteStep
             let dir = step.AssemblyConstants.TryGetValue AssemblyConstants.OutputPath |> function
                 | true, outputFolder when outputFolder <> null -> Path.Combine(outputFolder, "src")
@@ -42,6 +44,8 @@ type Emitter() =
                 |> Seq.filter (fun fileName -> not ((fileName.Value |> Path.GetFileName).EndsWith ".dll"))
             for source in allSources do
                 let content = SimulationCode.generate source context
+                Console.WriteLine("===q#.cs=== invoking Generatedfile " + source.Value)
+                
                 CompilationLoader.GeneratedFile(source, dir, ".g.cs", content) |> ignore
             transformed <- compilation
             true
