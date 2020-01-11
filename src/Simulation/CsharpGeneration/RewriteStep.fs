@@ -42,7 +42,8 @@ type Emitter() =
                 |> Seq.filter (fun fileName -> not ((fileName.Value |> Path.GetFileName).EndsWith ".dll"))
             for source in allSources do
                 let content = SimulationCode.generate source context
-                CompilationLoader.GeneratedFile(source, dir, ".g.cs", content) |> ignore
+                let generatedFile = CompilationLoader.GeneratedFile(source, dir, ".g.cs", content)
+                sprintf "[CsharpGeneration]: generated file \"%s\"" generatedFile |> Console.WriteLine
             transformed <- compilation
             true
 
