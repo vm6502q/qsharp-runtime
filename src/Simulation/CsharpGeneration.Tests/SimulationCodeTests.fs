@@ -193,6 +193,7 @@ namespace N1
     let returnTest10                            = findCallable @"returnTest10"
     let bitOperations                           = findCallable @"bitOperations"
     let testLengthDependency                    = findCallable @"testLengthDependency"
+    let UpdateUdtItems                          = findCallable @"UpdateUdtItems"
     
     let udt_args0                               = findUdt @"udt_args0"
     let udt_args1                               = findUdt @"udt_args1"
@@ -219,9 +220,9 @@ namespace N1
             |> formatSyntaxTree
         Assert.Equal(expected |> clearFormatting, actual |> clearFormatting)
 
-    let testOneBody (builder:StatementBlockBuilder) (expected: string list) =
+    let testOneBody (builder:SyntaxBuilder) (expected: string list) =
         let actual = 
-            builder.Statements
+            builder.BuiltStatements
             |> List.map (fun s -> s.ToFullString())
         Assert.Equal(expected.Length, actual.Length)
         List.zip (expected |> List.map clearFormatting) (actual |> List.map clearFormatting) |> List.iter Assert.Equal
@@ -283,7 +284,7 @@ namespace N1
             let sortByNames l = l |> List.sortBy (fun ((n,_),_) -> n) |> List.sortBy (fun ((_,ns),_) -> ns)
             let actual = 
                 op
-                |> operationDependencies context
+                |> operationDependencies
                 |> List.map (fun n -> ((n.Namespace.Value, n.Name.Value), (n |> roslynCallableTypeName context)))
             
             List.zip (expected |> sortByNames) (actual |> sortByNames)
@@ -841,7 +842,7 @@ namespace N1
     let ``buildInit test`` () =
         let testOne (_,op) body =
             let context  = createTestContext op
-            let deps     = op   |> operationDependencies context |> depsByName
+            let deps     = op   |> operationDependencies |> depsByName
             let actual   = deps |> buildInit context |> formatSyntaxTree
             let expected = sprintf "public override void Init() { %s }" (String.concat "" body)
             Assert.Equal (expected |> clearFormatting, actual |> clearFormatting)
@@ -899,7 +900,7 @@ namespace N1
     let ``getTypeOfOp test`` () =
         let testOne (_,op) =
             let dependendies context d =
-                operationDependencies context d
+                operationDependencies d
                 |> List.map (getTypeOfOp context)
                 |> List.map formatSyntaxTree 
                 |> List.sort
@@ -944,7 +945,7 @@ namespace N1
             let context = createTestContext op
             let actual = 
                 op
-                |> operationDependencies context
+                |> operationDependencies
                 |> depsByName
                 |> buildOpsProperties context
                 |> List.map formatSyntaxTree
@@ -1038,8 +1039,8 @@ namespace N1
 
     let createVisitor (_,op) (sp:QsSpecialization) =
         let context = createTestContext op
-        let builder = new StatementBlockBuilder(context)
-        (SyntaxBuilder(builder)).dispatchSpecialization sp |> ignore
+        let builder = new SyntaxBuilder(context)
+        builder.Namespaces.OnSpecializationDeclaration sp |> ignore
         builder        
 
     let applyVisitor (ns,op) =
@@ -2611,7 +2612,7 @@ namespace N1
         let context = createTestContext op
         let actual = 
             op
-            |> operationDependencies context
+            |> operationDependencies
             |> depsByName
             |> buildOpsProperties context
             |> List.map formatSyntaxTree
@@ -2621,6 +2622,39 @@ namespace N1
 
     [<Fact>]
     let ``buildOperationClass - concrete functions`` () = 
+        """
+    [SourceLocation("%%%", OperationFunctor.Body, 1301,-1)]
+    public partial class UpdateUdtItems : Function<MyType2, MyType2>, ICallable
+    {
+        public UpdateUdtItems(IOperationFactorym) : base(m)
+        {
+        }
+        
+        String ICallable.Name => "UpdateUdtItems";
+        String ICallable.FullName => "Microsoft.Quantum.Compiler.Generics.UpdateUdtItems";
+        
+        public static OperationInfo<MyType2, MyType2> Info => new OperationInfo<MyType2, MyType2>(typeof(UpdateUdtItems));
+        
+        public override Func<MyType2, MyType2> Body => (__in__) => 
+        {
+            var udt = __in__;
+            vararr=QArray<Int64>.Create(10L);
+            return new MyType2((1L,udt.Data.Item2,(arr?.Copy(),udt.Data.Item3.Item2)));
+        };
+        
+        public override void Init() { }
+        
+        public override IApplyData __dataIn(MyType2data) => data;
+        public override IApplyData __dataOut(MyType2data) => data;
+        public static System.Threading.Tasks.Task<MyType2> Run(IOperationFactory __m__, MyType2 udt)
+        {
+            return __m__.Run<UpdateUdtItems,MyType2,MyType2>(udt);
+        }
+    }
+        """
+        |> testOneClass UpdateUdtItems
+
+
         """
     public abstract partial class emptyFunction : Function<QVoid, QVoid>, ICallable
     {
