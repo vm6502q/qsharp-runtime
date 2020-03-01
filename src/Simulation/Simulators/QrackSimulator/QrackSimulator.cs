@@ -15,7 +15,11 @@ namespace Microsoft.Quantum.Simulation.Simulators
 {
     public partial class QrackSimulator : SimulatorBase, IDisposable
     {
+#if _WINDOWS
         public const string QRACKSIM_DLL_NAME = @"C:\\Program Files (x86)\\Qrack\\bin\\qrack_pinvoke.dll";
+#else
+        public const string QRACKSIM_DLL_NAME = @"/usr/local/lib/libqrack_pinvoke.so.3.1";
+#endif
 
         private delegate void IdsCallback(uint id);
 
