@@ -180,7 +180,6 @@ namespace Microsoft.Quantum.Simulation.Simulators.Tests
                 Assert.False(File.Exists("()"));
             }
 
-            Helper.RunWithMultipleSimulators((s) => RunOne(s as IOperationFactory));
             RunOne(new QCTraceSimulator());
             RunOne(new ResourcesEstimator());
             RunOne(new QuantumSimulator());
