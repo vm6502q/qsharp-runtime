@@ -20,6 +20,7 @@ open Microsoft.Quantum.QsCompiler.ReservedKeywords
 open Microsoft.Quantum.QsCompiler.SyntaxTokens 
 open Microsoft.Quantum.QsCompiler.SyntaxTree
 open Microsoft.Quantum.QsCompiler.SyntaxExtensions
+open Microsoft.Quantum.QsCompiler.Transformations.Core
 open Microsoft.Quantum.QsCompiler.Transformations.BasicTransformations
 
 
@@ -29,7 +30,6 @@ open Microsoft.Quantum.QsCompiler.Transformations.BasicTransformations
 /// It uses BrightSword's (John Azariah's) F# wrapper for easier readability.
 /// ---------------------------------------------------------------------------
 module SimulationCode =
-    open Microsoft.Quantum.QsCompiler.Transformations
     open System.Globalization
     
     type CodegenContext with
@@ -197,97 +197,105 @@ module SimulationCode =
 
     // Top-level and public for testing
     let floatToString (f : double) =
-        sprintf "%sD" (f.ToString("R", System.Globalization.CultureInfo.InvariantCulture))
+        sprintf "%sD" (f.ToString("R", CultureInfo.InvariantCulture))
 
     let mutable private count = 0
     let private nextArgName() =
         count <- count + 1
         sprintf "__arg%d__" count
 
-    type ExpressionSeeker(context) = 
-        inherit DefaultExpressionTransformation()
+    type ExpressionSeeker(parent : SyntaxTreeTransformation<HashSet<QsQualifiedName>>) = 
+        inherit ExpressionTransformation<HashSet<QsQualifiedName>>(parent, TransformationOptions.NoRebuild)
 
-        member val Operations : Set<QsQualifiedName> = Set.empty with get, set
-
-        override this.Transform ex =
+        override this.OnTypedExpression ex =
             match ex.Expression with
             | Identifier (id, _) -> 
                 match id with
-                | GlobalCallable n -> this.Operations <- this.Operations.Add n
+                | GlobalCallable name -> this.SharedState.Add name |> ignore
                 | _ -> ()
             | _ -> ()
-            base.Transform ex    
+            base.OnTypedExpression ex    
 
     /// Used to discover which operations are used by a certain code block.
-    type OperationsSeeker(context : CodegenContext) =
-        inherit ScopeTransformation<StatementKindSeeker, ExpressionSeeker>
-                (new Func<_,_>(fun s -> new StatementKindSeeker(s :?> OperationsSeeker)), new ExpressionSeeker(context))   
-
-        member this.Operations 
-            with get () = this._Expression.Operations
-            and set v = this._Expression.Operations <- v
-           
-    /// Used to discover which operations are used by a certain code block.
-    and StatementKindSeeker(opSeeker : OperationsSeeker) = 
-        inherit StatementKindTransformation<OperationsSeeker>(opSeeker)
+    type StatementKindSeeker(parent : SyntaxTreeTransformation<HashSet<QsQualifiedName>>) = 
+        inherit StatementKindTransformation<HashSet<QsQualifiedName>>(parent, TransformationOptions.NoRebuild)
 
         let ALLOCATE = { Name = "Allocate" |> NonNullable<string>.New; Namespace = "Microsoft.Quantum.Intrinsic" |> NonNullable<string>.New }
         let RELEASE  = { Name = "Release"  |> NonNullable<string>.New; Namespace = "Microsoft.Quantum.Intrinsic" |> NonNullable<string>.New }
         let BORROW   = { Name = "Borrow"   |> NonNullable<string>.New; Namespace = "Microsoft.Quantum.Intrinsic" |> NonNullable<string>.New }
         let RETURN   = { Name = "Return"   |> NonNullable<string>.New; Namespace = "Microsoft.Quantum.Intrinsic" |> NonNullable<string>.New }
 
-        override this.onAllocateQubits node = 
-            this._Scope.Operations <- this._Scope.Operations.Add ALLOCATE
-            this._Scope.Operations <- this._Scope.Operations.Add RELEASE
-            base.onAllocateQubits node 
+        override this.OnAllocateQubits node = 
+            this.SharedState.Add ALLOCATE |> ignore
+            this.SharedState.Add RELEASE |> ignore
+            base.OnAllocateQubits node 
 
-        override this.onBorrowQubits node = 
-            let t = UnitType |> ResolvedType.New        // Dummy, not used.
-            this._Scope.Operations <- this._Scope.Operations.Add BORROW
-            this._Scope.Operations <- this._Scope.Operations.Add RETURN
-            base.onBorrowQubits node 
+        override this.OnBorrowQubits node = 
+            this.SharedState.Add BORROW |> ignore
+            this.SharedState.Add RETURN |> ignore
+            base.OnBorrowQubits node 
 
-    /// Used to generate the list of statements that implement a Q# operation specialization.
-    type StatementBlockBuilder(context) = 
-        inherit ScopeTransformation<StatementBuilder, NoExpressionTransformations>
-                (new Func<_,_>(fun s -> new StatementBuilder(s :?> StatementBlockBuilder, context)), new NoExpressionTransformations())
-        
+    /// Used to discover which operations are used by a certain code block.
+    type OperationsSeeker private (_private_) =
+        inherit SyntaxTreeTransformation<HashSet<QsQualifiedName>>(new HashSet<_>(), TransformationOptions.NoRebuild)
+
+        new () as this = 
+            new OperationsSeeker("_private_") then 
+                this.StatementKinds <- new StatementKindSeeker(this)
+                this.Expressions <- new ExpressionSeeker(this)
+                this.Types <- new TypeTransformation<HashSet<QsQualifiedName>>(this, TransformationOptions.Disabled)
+
+
+    type SyntaxBuilder private (_private_) =
+        inherit SyntaxTreeTransformation(TransformationOptions.NoRebuild)
+
         member val DeclarationsInStatement = LocalDeclarations.Empty with get, set
         member val DeclarationsInScope = LocalDeclarations.Empty with get, set
 
-        member this.Statements = this._StatementKind.Statements
-        member this.SetStartLine nr = this._StatementKind.StartLine <- nr
+        member val BuiltStatements = [] with get, set
 
-        override this.Transform (scope : QsScope) = 
-            this.DeclarationsInScope <- scope.KnownSymbols
-            base.Transform scope
+        member val StartLine = None with get, set
+        member val LineNumber = None with get, set
 
-        override this.onStatement (node:QsStatement) =
+        new (context : CodegenContext) as this = 
+            new SyntaxBuilder("_private_") then 
+                this.Namespaces <- new NamespaceBuilder(this)
+                this.Statements <- new StatementBlockBuilder(this)
+                this.StatementKinds <- new StatementBuilder(this, context)
+                this.Expressions <- new ExpressionTransformation(this, TransformationOptions.Disabled)
+                this.Types <- new TypeTransformation(this, TransformationOptions.Disabled)
+
+    /// Used to generate the list of statements that implement a Q# operation specialization.
+    and StatementBlockBuilder(parent : SyntaxBuilder) = 
+        inherit StatementTransformation(parent, TransformationOptions.NoRebuild)
+
+        override this.OnScope (scope : QsScope) = 
+            parent.DeclarationsInScope <- scope.KnownSymbols
+            base.OnScope scope
+
+        override this.OnStatement (node:QsStatement) =
             match node.Location with 
             | Value loc -> 
                 let (current, _) = loc.Offset
-                this._StatementKind.LineNumber <- this._StatementKind.StartLine |> Option.map (fun start -> start + current + 1) // The Q# compiler reports 0-based line numbers.
+                parent.LineNumber <- parent.StartLine |> Option.map (fun start -> start + current + 1) // The Q# compiler reports 0-based line numbers.
             | Null -> 
-                this._StatementKind.LineNumber <- None // auto-generated statement; the line number will be set to the specialization declaration
-            this.DeclarationsInStatement <- node.SymbolDeclarations
-            this.DeclarationsInScope <- LocalDeclarations.Concat this.DeclarationsInScope this.DeclarationsInStatement // only fine because/if a new StatementBlockBuilder is created for every block!
-            base.onStatement node
+                parent.LineNumber <- None // auto-generated statement; the line number will be set to the specialization declaration
+            parent.DeclarationsInStatement <- node.SymbolDeclarations
+            parent.DeclarationsInScope <- LocalDeclarations.Concat parent.DeclarationsInScope parent.DeclarationsInStatement // only fine because/if a new statement transformation is created for every block!
+            base.OnStatement node
 
     /// Used to generate the statements that implement a Q# operation specialization.
-    and StatementBuilder(bodyBuilder, context) =
-        inherit StatementKindTransformation<StatementBlockBuilder>(bodyBuilder)
+    and StatementBuilder(parent : SyntaxBuilder, context) =
+        inherit StatementKindTransformation(parent, TransformationOptions.NoRebuild)
        
-        let mutable lineNumber = None
-        let mutable startLine  = None
-
         let withLineNumber s =
             // add a line directive if the operation specifies the source file and a line number
-            match context.fileName, lineNumber with
+            match context.fileName, parent.LineNumber with
             | Some _, Some ln when ln = 0 ->
                 ``#line hidden`` <| s
             | Some n, Some ln -> 
                 ``#line`` ln n s
-            | Some n, None -> startLine |> function 
+            | Some n, None -> parent.StartLine |> function 
                 | Some ln -> 
                     ``#line`` (ln + 1) n s // we need 1-based line numbers here, and startLine is zero-based
                 | None -> s
@@ -423,19 +431,34 @@ module SimulationCode =
                 lhsAsQArray <.> (``ident`` "Modify", [ buildExpression accEx; captureExpression rhsEx ]) // in-place modification
             | _ -> lhsEx.ResolvedType.Resolution |> function
                 | UserDefinedType udt -> 
-                    let itemName = accEx.Expression |> function
-                        | Identifier (LocalVariable id, Null) -> id
-// TODO: Diagnostics
-                        | _ -> failwith "item access expression in copy-and-update expression for user defined type is not a suitable identifier"
                     let name = QsQualifiedName.New (udt.Namespace, udt.Name)
                     let decl = findUdt context name
-                    let root = (buildExpression lhsEx) <|.|> (``ident`` "Data")
+
+                    let isUserDefinedType = function | UserDefinedType _ -> true | _ -> false
+                    let getItemName = function
+                        | Identifier (LocalVariable id, Null) -> id.Value
+// TODO: Diagnostics
+                        | _ -> failwith "item access expression in copy-and-update expression for user defined type is not a suitable identifier"
+                    let updatedItems = new Dictionary<string, ExpressionSyntax>()
+                    let rec aggregate (lhs : TypedExpression) = 
+                        match lhs.Expression with 
+                        | CopyAndUpdate (l, i, r) when l.ResolvedType.Resolution |> isUserDefinedType -> 
+                            let lhs = aggregate l // need to recur first, or make sure key is not already in dictionary
+                            updatedItems.[getItemName i.Expression] <- captureExpression r
+                            lhs
+                        | _ -> lhs
+                    let lhs = aggregate lhsEx |> buildExpression 
+                    updatedItems.[getItemName accEx.Expression] <- captureExpression rhsEx // needs to be after aggregate
+
+                    let root = lhs <|.|> (``ident`` "Data")
                     let items = getAllItems root decl.Type
                     let rec buildArg  = function 
                         | QsTuple args -> args |> Seq.map buildArg |> Seq.toList |> ``tuple``
-                        | QsTupleItem (Named item) when item.VariableName.Value = itemName.Value -> 
-                            items.Dequeue() |> ignore
-                            captureExpression rhsEx
+                        | QsTupleItem (Named item) -> updatedItems.TryGetValue item.VariableName.Value |> function
+                            | true, rhs ->                             
+                                items.Dequeue() |> ignore
+                                rhs
+                            | _ -> items.Dequeue()
                         | QsTupleItem _ -> items.Dequeue()
                     ``new`` (``type`` [ justTheName context name ]) ``(`` [buildArg decl.TypeItems] ``)``                       
                 | _ -> failwith "copy-and-update expressions are currently only supported for arrays and user defined types"
@@ -544,10 +567,10 @@ module SimulationCode =
             | _ -> ``item`` (buildExpression a) [ (buildExpression i) ] 
            
         let buildBlock (block : QsScope) = 
-            let builder = new StatementBlockBuilder(context)
-            builder.SetStartLine startLine
-            builder.Transform block |> ignore
-            builder.Statements
+            let builder = new SyntaxBuilder(context)
+            builder.StartLine <- parent.StartLine
+            builder.Statements.OnScope block |> ignore
+            builder.BuiltStatements
 
         let buildSymbolTuple buildTuple buildSymbol symbol = 
             let rec buildOne = function
@@ -581,32 +604,22 @@ module SimulationCode =
             | CONDITIONAL (_, l, r) -> isArrayInit l && isArrayInit r
             | _ -> false
 
-        member val Statements = [] with get, set
-
-        member this.StartLine 
-          with get() = startLine
-          and set(value) = startLine <- value
-
-        member this.LineNumber
-          with get() = lineNumber
-          and set(value) = lineNumber <- value
-
         member this.AddStatement (s:StatementSyntax) =
-            this.Statements <- this.Statements @ [s |> withLineNumber]
+            parent.BuiltStatements <- parent.BuiltStatements @ [s |> withLineNumber]
 
-        override this.onExpressionStatement (node:TypedExpression) =
+        override this.OnExpressionStatement (node:TypedExpression) =
             buildExpression node
             |> (statement >> this.AddStatement)
             QsExpressionStatement node
 
-        override this.onReturnStatement (node:TypedExpression) =
+        override this.OnReturnStatement (node:TypedExpression) =
             buildExpression node
             |> Some
             |> ``return``
             |> this.AddStatement
             QsReturnStatement node
 
-        override this.onVariableDeclaration (node:QsBinding<TypedExpression>) = 
+        override this.OnVariableDeclaration (node:QsBinding<TypedExpression>) = 
             let bindsArrays = node.Rhs.ResolvedType |> containsArrays
             let rhs = node.Rhs |> captureExpression 
             let buildBinding buildName = 
@@ -638,7 +651,7 @@ module SimulationCode =
                     buildBinding imName 
 
                     // build the actual binding, making sure all necessary QArrays instances are created
-                    for localVar in this._Scope.DeclarationsInStatement.Variables do  
+                    for localVar in parent.DeclarationsInStatement.Variables do  
                         let varName = localVar.VariableName.Value
                         match localVar.Type.Resolution |> QArrayType with 
                         | Some arrType -> 
@@ -649,7 +662,7 @@ module SimulationCode =
             | _ -> buildBinding id
             QsVariableDeclaration node
 
-        override this.onValueUpdate (node:QsValueUpdate) =
+        override this.OnValueUpdate (node:QsValueUpdate) =
             let rec varNames onTuple onItem (ex : TypedExpression) = 
                 match ex.Expression with 
                 | MissingExpr -> onItem "_"
@@ -693,7 +706,7 @@ module SimulationCode =
                 // build the actual binding, making sure all necessary QArrays instances are created
                 let ids = varNames (Seq.collect id) (fun id -> seq{ if id <> "_" then yield id}) node.Lhs
                 for id in ids do 
-                    let decl = this._Scope.DeclarationsInScope.Variables |> Seq.tryFind (fun d -> d.VariableName.Value = id)
+                    let decl = parent.DeclarationsInScope.Variables |> Seq.tryFind (fun d -> d.VariableName.Value = id)
                     match decl |> Option.map (fun d -> d.Type.Resolution |> QArrayType) |> Option.flatten with 
                     | Some arrType -> // we need to make sure to create a new QArray instance here
                         let qArray = ``new`` arrType ``(`` [imName id |> ``ident``] ``)``
@@ -703,7 +716,7 @@ module SimulationCode =
             | _ -> lhs <-- rhs |> statement |> this.AddStatement
             QsValueUpdate node
 
-        override this.onConditionalStatement (node:QsConditionalStatement) =    
+        override this.OnConditionalStatement (node:QsConditionalStatement) =    
             let all   = node.ConditionalBlocks
             let (cond, thenBlock) = all.[0]
             let cond  = cond |> buildExpression
@@ -720,7 +733,7 @@ module SimulationCode =
             |> this.AddStatement
             QsConditionalStatement node
                
-        override this.onForStatement (node:QsForStatement) =
+        override this.OnForStatement (node:QsForStatement) =
             let sym   = node.LoopItem |> fst |> buildSymbolNames id
             let range = node.IterationValues |> captureExpression
             let body  = node.Body |> buildBlock
@@ -728,14 +741,14 @@ module SimulationCode =
             |> this.AddStatement
             QsForStatement node
 
-        override this.onWhileStatement (node:QsWhileStatement) =
+        override this.OnWhileStatement (node:QsWhileStatement) =
             let cond   = node.Condition |> buildExpression
             let body  = node.Body |> buildBlock
             ``while`` ``(`` cond  ``)`` body
             |> this.AddStatement
             QsWhileStatement node
                                 
-        override this.onRepeatStatement rs =        
+        override this.OnRepeatStatement rs =        
             let buildTest test fixup =
                 let condition = buildExpression test
                 let thens = [``break``]
@@ -747,7 +760,7 @@ module SimulationCode =
             |> this.AddStatement
             QsRepeatStatement rs
 
-        override this.onQubitScope (using:QsQubitScope) = 
+        override this.OnQubitScope (using:QsQubitScope) = 
             let (alloc, release) = 
                 match using.Kind with 
                 | Allocate -> ("Allocate", "Release")
@@ -766,8 +779,8 @@ module SimulationCode =
 // todo: diagnostics
                 | InvalidInitializer -> failwith ("InvalidInitializer received")
             let rec buildReleaseExpression (symbol,expr:ResolvedInitializer) : StatementSyntax list =
-                let currentLine = lineNumber
-                lineNumber <- Some 0
+                let currentLine = parent.LineNumber
+                parent.LineNumber <- Some 0
                 let buildOne sym =
                     (``ident`` release) <.> (``ident`` "Apply", [ (``ident`` (sym)) ]) |> (statement >> withLineNumber)
                 let rec buildDeconstruct sym (rhs:ResolvedInitializer) =
@@ -783,7 +796,7 @@ module SimulationCode =
                     | VariableName one, QubitTupleAllocation _      -> (buildDeconstruct one.Value expr) 
                     | VariableNameTuple ss, QubitTupleAllocation aa -> Seq.zip ss aa |> Seq.map buildReleaseExpression |> Seq.toList |> List.concat
                     | _ -> failwith ("InvalidItem received")
-                lineNumber <- currentLine
+                parent.LineNumber <- currentLine
                 releases    
                 
             let symbols = removeDiscarded using.Binding.Lhs
@@ -811,31 +824,31 @@ module SimulationCode =
 
             // Put all statements into their own brackets so variable names have their own context.
             // Make sure the brackets get #line hidden:
-            let currentLine = lineNumber
-            lineNumber <- lineNumber |> Option.map (fun _ -> 0)
+            let currentLine = parent.LineNumber
+            parent.LineNumber <- parent.LineNumber |> Option.map (fun _ -> 0)
             ``{{`` statements ``}}`` |> this.AddStatement
-            lineNumber <- currentLine
+            parent.LineNumber <- currentLine
             QsQubitScope using
 
-        override this.onFailStatement fs = 
+        override this.OnFailStatement fs = 
             let failException = ``new`` (``type`` ["ExecutionFailException"]) ``(`` [ (buildExpression fs) ] ``)``
             this.AddStatement (``throw`` <| Some failException)
             QsFailStatement fs
 
-    type SyntaxBuilder (bodyBuilder) = 
-        inherit SyntaxTreeTransformation<StatementBlockBuilder>(bodyBuilder)
+    and NamespaceBuilder (parent : SyntaxBuilder) = 
+        inherit NamespaceTransformation(parent, TransformationOptions.NoRebuild)
 
-        override this.beforeSpecialization (sp : QsSpecialization) = 
+        override this.OnSpecializationDeclaration (sp : QsSpecialization) = 
             count <- 0
             match sp.Location with 
-            | Value location -> this._Scope.SetStartLine (Some (location.Offset |> fst))
-            | Null -> this._Scope.SetStartLine None // TODO: we may need to have the means to know which original declaration the code came from
-            sp
+            | Value location -> parent.StartLine <- Some (location.Offset |> fst)
+            | Null -> parent.StartLine <- None // TODO: we may need to have the means to know which original declaration the code came from
+            base.OnSpecializationDeclaration sp
     
-    let operationDependencies context (od:QsCallable) =
-        let seeker = new OperationsSeeker(context)
-        (SyntaxTreeTransformation<_>(seeker)).dispatchCallable(od) |> ignore
-        seeker.Operations |> Seq.toList
+    let operationDependencies (od:QsCallable) =
+        let seeker = new OperationsSeeker()
+        seeker.Namespaces.OnCallableDeclaration od |> ignore
+        seeker.SharedState |> Seq.toList
 
     let getOpName context n = 
         if needsFullPath context n then prependNamespaceString n
@@ -886,18 +899,32 @@ module SimulationCode =
             [ ``public`` ]
             ``{`` [] ``}``
         :> MemberDeclarationSyntax     
-       
+
     /// For each Operation used in the given OperationDeclartion, returns
-    /// a Property that returns an instance of the operation by calling the 
+    /// a Property that returns an instance of the operation by calling the
     /// IOperationFactory
     let buildOpsProperties context (operations : QsQualifiedName list): MemberDeclarationSyntax list =
-        let buildOne n =
+        let getCallableAccessModifier qualifiedName =
+            match context.allCallables.TryGetValue qualifiedName with
+            | true, callable -> Some callable.Modifiers.Access
+            | false, _ -> None
+
+        let getPropertyModifiers qualifiedName =
+            // Use the right accessibility for the property depending on the accessibility of the callable.
+            // Note: In C#, "private protected" is the intersection of protected and internal.
+            match getCallableAccessModifier qualifiedName |> Option.defaultValue DefaultAccess with
+            | DefaultAccess -> [ ``protected`` ]
+            | Internal -> [ ``private``; ``protected`` ]
+
+        let buildOne qualifiedName =
             /// eg:
             /// protected opType opName { get; }
-            let signature = roslynCallableTypeName context n
-            let name = getOpName context n
-            ``prop`` signature name [ ``protected`` ] 
+            let signature = roslynCallableTypeName context qualifiedName
+            let name = getOpName context qualifiedName
+            let modifiers = getPropertyModifiers qualifiedName
+            ``prop`` signature name modifiers
             :> MemberDeclarationSyntax
+
         operations
         |> List.map buildOne
 
@@ -917,9 +944,9 @@ module SimulationCode =
         | Provided (args, _) ->           
             let returnType  = sp.Signature.ReturnType
             let statements  =
-                let builder = new StatementBlockBuilder(context)
-                (SyntaxBuilder(builder)).dispatchSpecialization sp |> ignore
-                builder.Statements
+                let builder = new SyntaxBuilder(context)
+                builder.Namespaces.OnSpecializationDeclaration sp |> ignore
+                builder.BuiltStatements
 
             let inData = ``ident`` "__in__"
             let ret = 
@@ -969,7 +996,7 @@ module SimulationCode =
             | QsAdjoint           -> "Adjoint"
             | QsControlled        -> "Controlled"
             | QsControlledAdjoint -> "ControlledAdjoint"
-        let body = (buildSpecializationBody context sp)
+        let body = buildSpecializationBody context sp
         let attributes =
             match sp.Location with 
             | Null -> []
@@ -981,7 +1008,7 @@ module SimulationCode =
                     | true, startPositions -> 
                         let index = startPositions.IndexOf location.Offset
                         if index + 1 >= startPositions.Count then -1 else fst startPositions.[index + 1] + 1
-    //TODO: diagnostics.
+//TODO: diagnostics.
                     | false, _ -> startLine
                 ``attribute`` None (``ident`` "SourceLocation") [ 
                     ``literal`` sp.SourceFile.Value 
@@ -1310,11 +1337,15 @@ module SimulationCode =
                 (constructors @ properties @ methods) 
             ``}``
 
+    let private classAccessModifier = function
+        | DefaultAccess -> ``public``
+        | Internal -> ``internal``
+
     // Builds the .NET class for the given operation.
     let buildOperationClass (globalContext:CodegenContext) (op: QsCallable) =
         let context = globalContext.setCallable op
         let (name, nonGenericName) = findClassName context op
-        let opNames = operationDependencies context op
+        let opNames = operationDependencies op
         let inType   = op.Signature.ArgumentType |> roslynTypeName context
         let outType  = op.Signature.ReturnType   |> roslynTypeName context
 
@@ -1364,11 +1395,12 @@ module SimulationCode =
         let innerClasses = ([ inData |> snd;  outData |> snd ] |> List.choose id) @ unitTests
         let methods = [ opNames |> buildInit context; inData |> fst;  outData |> fst; buildRun context nonGenericName op.ArgumentTuple op.Signature.ArgumentType op.Signature.ReturnType ]
         
-        let modifiers = 
-            if isAbstract op then            
-                [``public``; ``abstract``; ``partial``]
+        let modifiers =
+            let access = classAccessModifier op.Modifiers.Access
+            if isAbstract op then
+                [ access; ``abstract``; ``partial`` ]
             else
-                [``public``; ``partial`` ]
+                [ access; ``partial`` ]
 
         ``attributes`` (attr |> List.concat) (
             ``class`` name ``<<`` typeParameters ``>>``
@@ -1452,7 +1484,7 @@ module SimulationCode =
            
         let baseClassName = udtBaseClassName context qsharpType
         let baseClass     = ``simpleBase`` baseClassName
-        let modifiers     = [ ``public`` ]
+        let modifiers     = [ classAccessModifier udt.Modifiers.Access ]
         let interfaces    = [ ``simpleBase`` "IApplyData" ] 
         let constructors  = [ buildEmtpyConstructor; buildBaseTupleConstructor ]
         let qubitsField   = buildQubitsField context qsharpType
@@ -1487,7 +1519,7 @@ module SimulationCode =
         :> MemberDeclarationSyntax
 
     type AttributeGenerator () = 
-        inherit SyntaxTreeTransformation<NoScopeTransformations>(new NoScopeTransformations())
+        inherit NamespaceTransformation(TransformationOptions.NoRebuild)
 
         let mutable attributes = []
         let GenerateAndAdd attrName json =
@@ -1497,20 +1529,20 @@ module SimulationCode =
         member internal this.Apply (elements : IEnumerable<QsNamespaceElement>) = 
             attributes <- []
             for element in elements do 
-                base.dispatchNamespaceElement element |> ignore
+                base.OnNamespaceElement element |> ignore
             attributes |> List.rev
 
-        override this.beforeSpecialization (spec : QsSpecialization) = 
+        override this.OnSpecializationDeclaration (spec : QsSpecialization) = 
             (SpecializationDeclarationHeader.New spec).ToJson()
             |> GenerateAndAdd "SpecializationDeclaration"
             spec
 
-        override this.beforeCallable (callable : QsCallable) = 
+        override this.OnCallableDeclaration (callable : QsCallable) = 
             (CallableDeclarationHeader.New callable).ToJson()
             |> GenerateAndAdd "CallableDeclaration"
-            callable
+            base.OnCallableDeclaration callable
 
-        override this.onType (qsType : QsCustomType) = 
+        override this.OnTypeDeclaration (qsType : QsCustomType) = 
             (TypeDeclarationHeader.New qsType).ToJson()
             |> GenerateAndAdd "TypeDeclaration"
             qsType

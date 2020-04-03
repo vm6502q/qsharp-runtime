@@ -33,12 +33,27 @@ namespace Microsoft.Quantum.Simulation.Simulators.Tests
             {
                 try
                 {
-                    QVoid res = AllocateQubit2.Run(sim).Result;
+                    IgnorableAssert.Disable();
+                    QVoid res = sim.Execute<AllocateQubit2, QVoid, QVoid>(QVoid.Instance);
                 }
-                catch (AggregateException ex)
+                catch (ExecutionFailException)
                 {
-                    Assert.True(ex.InnerException is ExecutionFailException);
-                    // TODO: Need more checks here - stack frames and line numbers
+                    StackFrame[] stackFrames = sim.CallStack;
+
+                    // The following assumes that Assert is on Q# stack.
+                    Assert.Equal(2, stackFrames.Length);
+
+                    Assert.Equal("Microsoft.Quantum.Intrinsic.Assert", stackFrames[0].Callable.FullName);
+                    Assert.Equal(namespacePrefix + "AllocateQubit2", stackFrames[1].Callable.FullName);
+
+                    Assert.Equal(OperationFunctor.Body, stackFrames[0].Callable.Variant);
+                    Assert.Equal(OperationFunctor.Body, stackFrames[1].Callable.Variant);
+
+                    Assert.Equal(94, stackFrames[1].FailedLineNumber);
+                }
+                finally
+                {
+                    IgnorableAssert.Enable();
                 }
             }
         }
